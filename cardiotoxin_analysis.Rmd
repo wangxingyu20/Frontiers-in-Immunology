@@ -1,0 +1,128 @@
+```{r}
+library(CellChat)
+library(dittoSeq)
+library(dplyr)
+library(ggplot2)
+library(glmGamPoi)
+library(harmony)
+library(Seurat)
+library(SeuratWrappers)
+library(SingleCellExperiment)
+library(patchwork)
+library(qs)
+source("SCUtils.R")
+```
+```{r}
+options(future.globals.maxSize = 4000 * 1024^2)
+```
+# Load Samples
+```{r}
+wd <- "10X/"
+samples <- c("QW", "DW", "Q1D-2", "Q3D", "D5CV", "Q5CV")
+for (sample in samples) {
+  dir <- paste0(wd, sample, "/filtered_feature_bc_matrix")
+  expression_matrix <- Read10X(dir)
+  if (sample != "Q1D-2") {
+    assign(sample, CreateSeuratObject(expression_matrix, project=sample, min.features = 1))
+  }
+  else {
+    Q1D_2 <- CreateSeuratObject(expression_matrix, project="Q1D_2", min.features = 1)
+  }
+}
+
+QW.matrix <- read.csv("10X/GSM4230229_muscle_Q_counts.csv")
+rownames(QW.matrix) <- QW.matrix$X
+QW.matrix <- QW.matrix[-1]
+QW.mssm <- CreateSeuratObject(QW.matrix, project="QW", min.features = 1)
+
+DW.matrix <- read.csv("10X/GSM4230226_muscle_D_counts.csv")
+rownames(DW.matrix) <- DW.matrix$X
+DW.matrix <- DW.matrix[-1]
+DW.mssm <- CreateSeuratObject(DW.matrix, project="DW", min.features = 1)
+
+cardiotoxin.data <- readRDS("/projectnb/paxlab/DATA/ZhouDuchenne/KuangCardiotoxin/GSE138826_regen_data.rds")
+
+cardiotoxin.sc <- CreateSeuratObject(cardiotoxin.data[["RNA"]]@data, meta.data = cardiotoxin.data[["RNA"]]@varMetadata, project = "PURDUE")
+```
+```{r}
+QW[["orig.ident"]] <- "QW.BU"
+DW[["orig.ident"]] <- "DW.BU"
+QW.mssm[["orig.ident"]] <- "QW.MSSM"
+DW.mssm[["orig.ident"]] <- "DW.MSSM"
+```
+
+```{r}
+BU <- merge(Q1D_2, y=c(Q3D, Q5CV, D5CV), add.cell.ids = c("Q1D_2", "Q3D", "Q5CV", "D5CV"), project = "BU")
+BU <- JoinLayers(BU)
+MSSM <- merge(QW.mssm, y=DW.mssm, add.cell.ids = c("QW.MSSM", "DW.MSSM"), project = "MSSM")
+MSSM <- JoinLayers(MSSM)
+```
+
+# Update Metadata
+```{r}
+BU <- updateMetadata(BU)
+BU[["location"]] <- "BU"
+
+MSSM <- updateMetadata(MSSM)
+MSSM[["location"]] <- "MSSM"
+
+cardiotoxin.sc <- updateMetadata(cardiotoxin.sc)
+cardiotoxin.sc[["location"]] <- "PURDUE"
+cardiotoxin.sc <-  subset(cardiotoxin.sc, subset= orig.ident != "Noninjured")
+```
+# Filter Samples
+```{r}
+BU <- subset(x = BU, subset= (log10GenesPerUMI > 0.76) & (mitoRatio < 0.075))
+MSSM <- subset(x = MSSM, subset= (log10GenesPerUMI > 0.76) & (mitoRatio < 0.075))
+cardiotoxin <- subset(x = cardiotoxin.sc, subset= (log10GenesPerUMI > 0.76) & (mitoRatio < 0.075))
+```
+# Check Cell Cycle
+```{r}
+BU <- check_cycle(BU, FALSE)
+MSSM <- check_cycle(MSSM, FALSE)
+cardiotoxin <- check_cycle(cardiotoxin, FALSE)
+```
+# Merge and Integrate
+```{r}
+all.SCT <- merge(MSSM, y = c(BU, cardiotoxin), add.cell.ids = c("MSSM", "BU", "PURDUE"), project = "all")
+```
+```{r}
+all.SCT <- SCTransform(all.SCT, vars.to.regress = c("CC.Difference", "mitoRatio"), method = "glmGamPoi")
+all.SCT <- RunPCA(all.SCT, verbose = FALSE)
+all.SCT <- RunHarmony(all.SCT, assay.use="SCT", group.by.vars = "location")
+```
+# Cluster
+```{r}
+all.SCT <- FindNeighbors(all.SCT, reduction = "harmony", dims = 1:10)
+all.SCT <- FindClusters(all.SCT, resolution = 0.5)
+all.SCT <- RunUMAP(all.SCT, reduction = "harmony", dims = 1:10, return.model=TRUE)
+```
+```{r}
+DimPlot(all.SCT, reduction = "umap", group.by = "orig.ident")
+DimPlot(all.SCT, reduction = "umap")
+```
+```{r}
+VlnPlot(all.SCT, features=c("Adgre1", "Fcgr1"))
+DotPlot(all.SCT, dendritic.markers)
+DotPlot(all.SCT, neutrophil.markers)
+```
+```{r}
+momps.singlet <- subset(all.SCT, subset = seurat_clusters %in% c(0, 1, 2, 3, 4, 8, 9, 10, 12, 13))
+momps.singlet@meta.data$orig.ident <- factor(momps.singlet@meta.data$orig.ident, levels = c("QW.MSSM", "DW.MSSM", "0.5 DPI", "Q1D_2", "2 DPI", "Q3D", "3.5 DPI", "5 DPI", "10 DPI", "21 DPI", "Q5CV", "D5CV"))
+momps.singlet <- subset(momps.singlet, subset=Adgre1 > 1 & Fcgr1 > 1 & Pdgfra == 0 & Ly6a == 0)
+momps.singlet <- FindNeighbors(momps.singlet, reduction = "harmony", dims = 1:10)
+```
+```{r}
+momps.singlet <- FindClusters(momps.singlet, resolution = 0.5)
+momps.singlet <- RunUMAP(momps.singlet, reduction = "harmony", dims = 1:10, return.model=TRUE)
+```
+```{r}
+momps.de <- PrepSCTFindMarkers(momps.select)
+markers <- FindAllMarkers(momps.de, only.pos = TRUE,
+                           min.pct =  0.25, 
+                           min.diff.pct = 0.1)
+  
+markers <- markers %>% arrange(cluster, desc(avg_log2FC))
+markers <- filter(markers, avg_log2FC >= 0.5)
+write.csv(markers, "momp.markers.csv", row.names = FALSE)
+```

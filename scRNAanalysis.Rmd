@@ -1,0 +1,361 @@
+```{r}
+library(dittoSeq)
+library(dplyr)
+library(ggplot2)
+library(glmGamPoi)
+library(harmony)
+library(Seurat)
+library(SeuratWrappers)
+library(SingleCellExperiment)
+library(monocle3)
+library(patchwork)
+library(qs)
+source("SCUtils.R")
+```
+# Load Samples
+```{r}
+wd <- "10X/"
+samples <- c("Q1D-2", "Q3D", "D5CV", "Q5CV")
+for (sample in samples) {
+  dir <- paste0(wd, sample, "/filtered_feature_bc_matrix")
+  expression_matrix <- Read10X(dir)
+  if (sample != "Q1D-2") {
+    assign(sample, CreateSeuratObject(expression_matrix, project=sample, min.features = 1))
+  }
+  else {
+    Q1D_2 <- CreateSeuratObject(expression_matrix, project="Q1D_2", min.features = 1)
+  }
+}
+
+QW.matrix <- read.csv("10X/GSM4230229_muscle_Q_counts.csv")
+rownames(QW.matrix) <- QW.matrix$X
+QW.matrix <- QW.matrix[-1]
+QW.mssm <- CreateSeuratObject(QW.matrix, project="QW", min.features = 1)
+QW.assay <- CreateAssayObject(counts = QW.matrix)
+QW.mssm[["RNA"]] <- QW.assay
+
+DW.matrix <- read.csv("10X/GSM4230226_muscle_D_counts.csv")
+rownames(DW.matrix) <- DW.matrix$X
+DW.matrix <- DW.matrix[-1]
+DW.mssm <- CreateSeuratObject(DW.matrix, project="DW", min.features = 1)
+DW.assay <- CreateAssayObject(counts = DW.matrix)
+DW.mssm[["RNA"]] <- DW.assay
+```
+# Update Metadata
+```{r}
+Q1D_2 <- updateMetadata(Q1D_2)
+Q1D_2[["location"]] <- "BU"
+
+Q3D <- updateMetadata(Q3D)
+Q3D[["location"]] <- "BU"
+
+Q5CV <- updateMetadata(Q5CV)
+Q5CV[["location"]] <- "BU"
+
+D5CV <- updateMetadata(D5CV)
+D5CV[["location"]] <- "BU"
+
+QW.mssm <- updateMetadata(QW.mssm)
+QW.mssm[["location"]] <- "MSSM"
+
+DW.mssm <- updateMetadata(DW.mssm)
+DW.mssm[["location"]] <- "MSSM"
+```
+# Filter Samples
+```{r}
+Q1D_2.filtered <- subset(x = Q1D_2, subset= (log10GenesPerUMI > 0.76) & (mitoRatio < 0.075))
+Q3D.filtered <- subset(x = Q3D, subset= (log10GenesPerUMI > 0.76) & (mitoRatio < 0.075))
+Q5CV.filtered <- subset(x = Q5CV, subset= (log10GenesPerUMI > 0.76) & (mitoRatio < 0.075))
+D5CV.filtered <- subset(x = D5CV, subset= (log10GenesPerUMI > 0.76) & (mitoRatio < 0.075))
+QW.mssm.filtered <- subset(x = QW.mssm, subset= (log10GenesPerUMI > 0.76) & (mitoRatio < 0.075))
+DW.mssm.filtered <- subset(x = DW.mssm, subset= (log10GenesPerUMI > 0.76) & (mitoRatio < 0.075))
+```
+# Check Cell Cycle
+```{r}
+Q1D_2.filtered <- check_cycle(Q1D_2.filtered, FALSE)
+Q3D.filtered <- check_cycle(Q3D.filtered, FALSE)
+Q5CV.filtered <- check_cycle(Q5CV.filtered, FALSE)
+D5CV.filtered <- check_cycle(D5CV.filtered, FALSE)
+QW.mssm.filtered <- check_cycle(QW.mssm.filtered, FALSE)
+DW.mssm.filtered <- check_cycle(DW.mssm.filtered, FALSE)
+```
+# SCTransform
+```{r}
+Q1D_2.SCT <- SCTransform(Q1D_2.filtered, vars.to.regress = c("CC.Difference", "mitoRatio"), method = "glmGamPoi")
+Q3D.SCT <- SCTransform(Q3D.filtered, vars.to.regress = c("CC.Difference", "mitoRatio"), method = "glmGamPoi")
+Q5CV.SCT <- SCTransform(Q5CV.filtered, vars.to.regress = c("CC.Difference", "mitoRatio"), method = "glmGamPoi")
+D5CV.SCT <- SCTransform(D5CV.filtered, vars.to.regress = c("CC.Difference", "mitoRatio"), method = "glmGamPoi")
+QW.mssm.SCT <- SCTransform(QW.mssm.filtered, vars.to.regress = c("CC.Difference", "mitoRatio"), method = "glmGamPoi")
+DW.mssm.SCT <- SCTransform(DW.mssm.filtered, vars.to.regress = c("CC.Difference", "mitoRatio"), method = "glmGamPoi")
+```
+# Dim Reduce
+```{r}
+Q1D_2.SCT <- dim_cluster(Q1D_2.SCT, res = 0.5, cluster.name = "orig.cluster")
+Q3D.SCT <- dim_cluster(Q3D.SCT, res = 0.5, cluster.name = "orig.cluster")
+Q5CV.SCT <- dim_cluster(Q5CV.SCT, res = 0.5, cluster.name = "orig.cluster")
+D5CV.SCT <- dim_cluster(D5CV.SCT, res = 0.5, cluster.name = "orig.cluster")
+QW.mssm.SCT <- dim_cluster(QW.mssm.SCT, res = 0.5, cluster.name = "orig.cluster")
+DW.mssm.SCT <- dim_cluster(DW.mssm.SCT, res = 0.5, cluster.name = "orig.cluster")
+```
+# Plot MO/MP
+```{r}
+VlnPlot(QW.mssm.SCT, features=c("Adgre1", "Fcgr1"))
+VlnPlot(DW.mssm.SCT, features=c("Adgre1", "Fcgr1"))
+VlnPlot(object=QW.SCT, features=c("Adgre1", "Fcgr1"))
+VlnPlot(object=DW.SCT, features=c("Adgre1", "Fcgr1"))
+VlnPlot(object=Q1D_2.SCT, features=c("Adgre1", "Fcgr1"))
+VlnPlot(object=Q3D.SCT, features=c("Adgre1", "Fcgr1"))
+VlnPlot(object=Q5CV.SCT, features=c("Adgre1", "Fcgr1"))
+VlnPlot(object=D5CV.SCT, features=c("Adgre1", "Fcgr1"))
+```
+# Subset MO/MPs
+```{r}
+QW.momps <- subset(QW.mssm.SCT, subset=seurat_clusters != 8)
+DW.momps <- subset(DW.mssm.SCT, subset=seurat_clusters != 8)
+Q1D_2.momps <- subset(Q1D_2.SCT, subset=seurat_clusters %in% c(0, 2, 5, 6, 7, 8))
+Q3D.momps <- subset(Q3D.SCT, subset=seurat_clusters %in% c(0, 1, 3, 4, 6, 7))
+Q5CV.momps <- subset(Q5CV.SCT, subset=seurat_clusters %in% c(0, 2, 3, 6))
+D5CV.momps <- subset(D5CV.SCT, subset=seurat_clusters %in% c(1, 4, 8))
+```
+```{r}
+momps <- merge(QW.momps, y = c(DW.momps, Q1D_2.momps, Q3D.momps, Q5CV.momps, D5CV.momps), add.cell.ids = c("QW", "DW", "Q1D_2", "Q3D", "Q5CV", "D5CV"), project = "BU MOMPs")
+momps@meta.data$orig.ident <- factor(momps@meta.data$orig.ident, levels = c("QW", "DW", "Q1D_2", "Q3D", "Q5CV", "D5CV"))
+```
+# Choose expression cutoffs
+```{r}
+markers <- FetchData(momps, c("Pdgfra", "Ly6a", "Adgre1", "Fcgr1"))
+ggplot(markers, aes(x=Pdgfra)) + geom_histogram()
+ggplot(markers, aes(x=Ly6a)) + geom_histogram()
+ggplot(markers, aes(x=Adgre1)) + geom_histogram()
+ggplot(markers, aes(x=Fcgr1)) + geom_histogram()
+```
+# Integrate and Cluster
+```{r}
+momps.singlet <- subset(momps, subset=Adgre1 > 1 & Fcgr1 > 1 & Pdgfra == 0 & Ly6a == 0)
+momps.singlet <- SCTransform(momps.singlet, vars.to.regress = c("CC.Difference", "mitoRatio"), method = "glmGamPoi")
+momps.singlet <- RunHarmony(momps.singlet, c("location"))
+momps.singlet <- FindNeighbors(momps.singlet, reduction = "harmony", dims = 1:10)
+momps.singlet <- FindClusters(momps.singlet, resolution = 0.5)
+momps.singlet <- RunUMAP(momps.singlet, reduction = "harmony", dims = 1:10, seed.use = 13, return.model=TRUE)
+```
+```{r}
+DimPlot(momps.singlet, reduction = "umap")
+DimPlot(momps.singlet, reduction = "umap", group.by = "orig.ident")
+```
+# Label Clusters and Metadata
+```{r}
+plotMompMarkers(momps.singlet, prefix = "Figures/DotPlots/MOMPType/", save = TRUE)
+```
+```{r}
+metadata <- momps.singlet@meta.data
+
+metadata$momptype[metadata$seurat_clusters == 0] <- "MP:Resident-Like:MhcII-High"
+metadata$momptype[metadata$seurat_clusters == 1] <- "MP:Pro-Inflammatory"
+metadata$momptype[metadata$seurat_clusters == 2] <- "MO"
+metadata$momptype[metadata$seurat_clusters == 3] <- "MP:Resident-Like:MhcII-Low"
+metadata$momptype[metadata$seurat_clusters == 4] <- "MP:Pro-Fibrotic"
+metadata$momptype[metadata$seurat_clusters == 5] <- "MP:Proliferating"
+metadata$momptype[metadata$seurat_clusters == 6] <- "MP:IFN-Activated"
+
+metadata$momptype <- factor(metadata$momptype, levels = c("MO", "MP:IFN-Activated", "MP:Pro-Inflammatory", "MP:Pro-Fibrotic", "MP:Resident-Like:MhcII-Low", "MP:Resident-Like:MhcII-High", "MP:Proliferating"))
+metadata$seurat_clusters <- factor(metadata$seurat_clusters, levels = c(0, 1, 2, 3, 4, 5, 6))
+metadata$muscle <- "quadricep"
+metadata$muscle[metadata$orig.ident %in% c("DW", "D5CV")] <- "diaphragm"
+metadata$condition <- "injury"
+metadata$condition[metadata$orig.ident %in% c("Q5CV", "D5CV")] <- "mdx"
+metadata$condition[metadata$orig.ident %in% c("QW", "DW")] <- "wt"
+
+momps.singlet@meta.data <- metadata
+```
+```{r}
+DimPlot(momps.singlet, reduction = "umap", split.by = "orig.ident", ncol = 2)
+DimPlot(momps.singlet, reduction = "umap", group.by = "momptype")
+```
+# Save Seurat Object
+```{r}
+saveRDS(momps.singlet, "MOMPs.Singlet.rds")
+```
+# Pseudotime
+```{r}
+cds <- as.cell_data_set(momps.singlet)
+cds <- cluster_cells(cds, cluster_method = 'louvain')
+cds <- learn_graph(cds, use_partition = TRUE, verbose = FALSE)
+```
+```{r}
+cds <- order_cells(cds, root_cells = colnames(cds[,clusters(cds) == 21]))
+FeaturePlot(momps.singlet, reduction = "umap", features = "Ly6c2")
+
+plot_cells(cds,
+           color_cells_by = "cluster",
+           label_groups_by_cluster=TRUE,
+           group_label_size = 12,
+           label_leaves=FALSE,
+           label_branch_points=FALSE)
+
+pseudopool <- plot_cells(cds,
+           color_cells_by = "pseudotime",
+           group_cells_by = "cluster",
+           label_cell_groups = FALSE,
+           label_groups_by_cluster=FALSE,
+           label_leaves=FALSE,
+           label_branch_points=FALSE,
+           label_roots = FALSE,
+           show_trajectory_graph=FALSE)
+ggsave("Figures/Pseudotimes/Pool.png", pseudopool, width = 7, height = 4.32, units = "in")
+
+pseudosample <- plot_cells(cds,
+           color_cells_by = "pseudotime",
+           group_cells_by = "cluster",
+           label_cell_groups = FALSE,
+           label_groups_by_cluster=FALSE,
+           label_leaves=FALSE,
+           label_branch_points=FALSE,
+           label_roots = FALSE,
+           show_trajectory_graph=FALSE)  +
+  facet_wrap(~orig.ident)
+
+ggsave("Figures/Pseudotimes/Sample.png", pseudosample, width = 7, height = 4.32, units = "in")
+```
+# Markers
+```{r}
+output_markers(momps.singlet, "seurat_clusters", 30, "DEGs/clusters")
+output_markers(momps.singlet, "momptype", 30, "DEGs/momps")
+```
+## MDX Quad vs Diaph
+```{r}
+mdx <- subset(momps.singlet, subset=condition == "mdx")
+output_markers(mdx, "muscle", 30, "DEGs/mdx_momps_qvd")
+```
+```{r}
+output_FC(mdx, "muscle", "diaphragm", "GSEA/FC/mdx_momps_dvq")
+```
+## Monocyte Markers
+```{r}
+monocytes <- subset(momps.singlet, subset=momptype=="MO")
+output_markers(monocytes, "orig.ident", 30, "DEGs/monocytes")
+```
+## Pro Fibrotic Markers
+```{r}
+profib <- subset(momps.singlet, subset=momptype=="MP:Pro-Fibrotic" & orig.ident != "Q1D_2")
+output_markers(profib, "orig.ident", 30, "DEGs/mpprofibrotic")
+```
+## Resident Like Markers
+```{r}
+mhchigh <- subset(momps.singlet, subset=momptype=="MP:Resident-Like:MhcII-High" & orig.ident %in% c("Q5CV", "D5CV"))
+output_markers(mhchigh, "orig.ident", 30, "DEGs/mdx_mhc2high")
+output_FC(mhchigh, "muscle", "diaphragm", "GSEA/FC/mdx_mhchigh_dvq")
+mhclow <- subset(momps.singlet, subset=momptype=="MP:Resident-Like:MhcII-Low" & orig.ident %in% c("Q5CV", "D5CV"))
+output_markers(mhclow, "orig.ident", 30, "DEGs/mdx_mhc2low")
+output_FC(mhclow, "muscle", "diaphragm", "GSEA/FC/mdx_mhclow_dvq")
+```
+# Summary
+```{r}
+metadata <- momps.singlet@meta.data
+mompprop <- ggplot(metadata, aes(x=orig.ident, fill=momptype)) + 
+  geom_bar(position="fill") +
+  ggtitle("Proportion of Pooled MO/MP Types by Sample") +
+  xlab("Sample") +
+  ylab("Proportion")
+ggsave("Figures/MOMPProp.png", mompprop, width = 7, height = 4.32, units = "in")
+
+clustermap <- DimPlot(momps.singlet, reduction = "umap", group.by = "seurat_clusters", ncol = 2) +
+  ggtitle("Pooled MO/MP Clusters") +
+  scale_color_manual(values = c("0" = "#A58AFF",
+                                "1" = "#53B400",
+                                "2" = "#F8766D",
+                                "3" = "#00B6EB",
+                                "4" = "#00C094",
+                                "5" = "#FB61D7",
+                                "6" = "#C49A00"))
+ggsave("Figures/UMAPs/Clusters.png", clustermap, width = 7, height = 4.32, units = "in")
+
+mompmap <- DimPlot(momps.singlet, reduction = "umap", group.by = "momptype") +
+  ggtitle("Pooled MO/MP Types")
+ggsave("Figures/UMAPs/MOMPType.png", mompmap, width = 7, height = 4.32, units = "in")
+
+clustersamplemap <- DimPlot(momps.singlet, reduction = "umap", group.by = "seurat_clusters", split.by = "orig.ident", ncol = 2) +
+  ggtitle("Pooled MO/MP Clusters by Sample") +
+  scale_color_manual(values = c("0" = "#A58AFF",
+                                "1" = "#53B400",
+                                "2" = "#F8766D",
+                                "3" = "#00B6EB",
+                                "4" = "#00C094",
+                                "5" = "#FB61D7",
+                                "6" = "#C49A00"))
+ggsave("Figures/UMAPs/ClustersBySample.png", clustersamplemap, width = 7, height = 4.32, units = "in")
+
+mompplot <- DotPlot(momps.singlet, features = c("Adgre1", "Fcgr1"), group.by = "seurat_clusters")
+ggsave("Figures/DotPlots/MOMP.png", mompplot, width = 7, height = 4.32, units = "in")
+
+important <- c("Ly6c2", "Spp1", "Fabp5", "Ccl2", "Ccr2", "Mrc1", "Lyve1")
+importantplot <- DotPlot(momps.singlet, features = important, group.by = "seurat_clusters")
+ggsave("Figures/DotPlots/Important.png", importantplot, width = 7, height = 4.32, units = "in")
+```
+```{r}
+for (gene in important) {
+  ftplot <- FeaturePlot(momps.singlet, features = gene)
+  ggsave(paste0("Figures/FeaturePlots/", gene, ".png"), ftplot, width = 7, height = 4.32, units = "in")
+}
+for (gene in M1) {
+  vln <- VlnPlot(momps.singlet, features = gene, group.by = "orig.ident", split.by = "momptype")
+  ggsave(paste0("Figures/ViolinPlots/M1/", gene, ".png"), vln, width = 7, height = 4.32, units = "in")
+}
+for (gene in M2) {
+  vln <- VlnPlot(momps.singlet, features = gene, group.by = "orig.ident", split.by = "momptype")
+  ggsave(paste0("Figures/ViolinPlots/M2/", gene, ".png"), vln, width = 7, height = 4.32, units = "in")
+}
+for (gene in Additional) {
+  vln <- VlnPlot(momps.singlet, features = gene, group.by = "orig.ident", split.by = "momptype")
+  ggsave(paste0("Figures/ViolinPlots/Additional/", gene, ".png"), vln, width = 7, height = 4.32, units = "in")
+}
+```
+```{r}
+Idents(object = momps.singlet) <- "momptype"
+markers <-FindAllMarkers(momps.singlet, 
+                         only.pos = FALSE,
+                         min.pct =  0.25, 
+                         min.diff.pct = 0.1)
+
+markers <- markers %>% arrange(cluster, desc(avg_log2FC))
+
+pos.markers <- filter(markers, avg_log2FC > 0)
+pos.markers <- pos.markers %>%
+  group_by(cluster) %>%
+  slice_max(n = 10, order_by = avg_log2FC)
+heatmap <- DoHeatmap(momps.singlet, features = pos.markers$gene)
+ggsave("Figures/MOMPHeatmap.png", heatmap, width = 10, height = 10, units = "in", limitsize = FALSE)
+```
+```{r}
+quiescence.plt <- dittoDotPlot(momps.singlet, var=satellite.quiescence, size = 3, group.by = "seurat_clusters", split.by = "orig.ident") +
+  ggtitle("Satellite Quiescence") + 
+  theme(axis.text.x = element_text(angle = 80, vjust = 1, hjust=1))
+ggsave("Figures/DotPlots/Pathways/satellite.quiescence.png", quiescence.plt, width = 10, height = 10, units = "in", limitsize = FALSE)
+
+activation.plt <- dittoDotPlot(momps.singlet, var=satellite.activation, size = 3, group.by = "seurat_clusters", split.by = "orig.ident") +
+  ggtitle("Satellite Activation") + 
+  theme(axis.text.x = element_text(angle = 80, vjust = 1, hjust=1))
+ggsave("Figures/DotPlots/Pathways/satellite.activated.png", activation.plt, width = 10, height = 10, units = "in", limitsize = FALSE)
+
+differentiation.plt <- dittoDotPlot(momps.singlet, var=satellite.differentiation, size = 3, group.by = "seurat_clusters", split.by = "orig.ident") +
+  ggtitle("Satellite Differentiation") + 
+  theme(axis.text.x = element_text(angle = 80, vjust = 1, hjust=1))
+ggsave("Figures/DotPlots/Pathways/satellite.differentiation.png", differentiation.plt, width = 10, height = 10, units = "in", limitsize = FALSE)
+
+fusion.plt <- dittoDotPlot(momps.singlet, var=myocyte.fusion, size = 3, group.by = "seurat_clusters", split.by = "orig.ident") +
+  ggtitle("Myocyte Fusion") + 
+  theme(axis.text.x = element_text(angle = 80, vjust = 1, hjust=1))
+ggsave("Figures/DotPlots/Pathways/myocyte.fusion.png", fusion.plt, width = 10, height = 10, units = "in", limitsize = FALSE)
+```
+# MOMP Freq Table
+```{r}
+mompfreq <- as.data.frame(table(filter(metadata, orig.ident == "QW")$momptype))
+mompfreq$DW <- table(filter(metadata, orig.ident == "DW")$momptype)
+mompfreq$Q1D_2 <- table(filter(metadata, orig.ident == "Q1D_2")$momptype)
+mompfreq$Q3D <- table(filter(metadata, orig.ident == "Q3D")$momptype)
+mompfreq$Q5CV <- table(filter(metadata, orig.ident == "Q5CV")$momptype)
+mompfreq$D5CV <- table(filter(metadata, orig.ident == "D5CV")$momptype)
+colnames(mompfreq) <- c("MOMP", "QW", "DW", "Q1D_2", "Q3D", "Q5CV", "D5CV")
+write.csv(mompfreq, "MOMPCount.csv", row.names = FALSE)
+```
+
+
